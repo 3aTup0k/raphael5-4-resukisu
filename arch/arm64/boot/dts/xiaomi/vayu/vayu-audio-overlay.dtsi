@@ -1,0 +1,47 @@
+/*
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "../common/sm8150-audio-overlay.dtsi"
+
+&snd_934x {
+	qcom,audio-routing =
+		"AIF4 VI", "MCLK",
+		"RX_BIAS", "MCLK",
+		"MADINPUT", "MCLK",
+		"hifi amp", "LINEOUT1",
+		"hifi amp", "LINEOUT2",
+		"AMIC2", "Headset Mic",
+		"Headset Mic", "MIC BIAS2",
+		"AMIC3", "ANCRight Headset Mic",
+		"ANCRight Headset Mic", "MIC BIAS3",
+		"AMIC1", "ANCLeft Headset Mic",
+		"ANCLeft Headset Mic", "MIC BIAS1",
+		"AMIC4", "ANCRight Headset Mic",
+		"ANCRight Headset Mic", "MIC BIAS1",
+		"AMIC5", "Analog Mic5",
+		"Analog Mic5", "MIC BIAS4";
+
+	qcom,wsa-max-devs = <0>;
+	qcom,msm-mbhc-hphl-swh = <1>;
+	qcom,msm-mbhc-gnd-swh = <1>;
+	qcom,msm-mbhc-usbc-audio-supported = <0>;
+	qcom,msm-mbhc-hs-mic-max-threshold-mv = <2600>;
+	qcom,msm-mbhc-hs-mic-min-threshold-mv = <50>;
+};
+
+&wcd934x_cdc {
+	qcom,cdc-micbias1-mv = <2700>;
+	qcom,cdc-micbias2-mv = <2700>;
+	qcom,cdc-micbias3-mv = <2700>;
+	qcom,cdc-micbias4-mv = <2700>;
+};
