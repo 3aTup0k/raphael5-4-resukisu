@@ -1,4 +1,4 @@
-name: Build Raphael 5.4
+name: Build Raphael Kernel
 
 on:
 workflow_dispatch:
@@ -8,23 +8,22 @@ build:
 runs-on: ubuntu-22.04
 
 steps:
-  - name: Install packages
+  - name: Install dependencies
     run: |
       sudo apt update
       sudo apt install -y \
-      git curl wget flex bison bc cpio \
-      zip unzip rsync build-essential \
-      libssl-dev libelf-dev
+        git wget curl bc bison flex cpio \
+        build-essential zip unzip rsync \
+        libssl-dev libelf-dev
 
   - name: Clone kernel
     run: |
-      git clone --depth=1 \
-      https://github.com/Nyako-mini/raphael5-4-resukisu.git kernel
+      git clone --depth=1 https://github.com/Nyako-mini/raphael5-4-resukisu.git kernel
 
   - name: Download toolchains
     run: |
-      mkdir tc
-      cd tc
+      mkdir toolchains
+      cd toolchains
 
       wget -q https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/llvm-arm-toolchain-ship-10.0.9.tar.gz
       wget -q https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/aarch64-linux-android-4.9-Linux-5.4.tar.gz
@@ -32,38 +31,46 @@ steps:
       tar -xf llvm-arm-toolchain-ship-10.0.9.tar.gz
       tar -xf aarch64-linux-android-4.9-Linux-5.4.tar.gz
 
-  - name: Set build info
+  - name: Show available defconfigs
     run: |
-      echo 'KBUILD_BUILD_USER=voxelsy' >> $GITHUB_ENV
-      echo 'KBUILD_BUILD_HOST=ubuntu' >> $GITHUB_ENV
-      echo 'LOCALVERSION=-qgki' >> $GITHUB_ENV
+      cd kernel
+      find arch/arm64/configs -type f | sort
 
-  - name: Build kernel
+  - name: Set kernel version
     run: |
-      export PATH=$GITHUB_WORKSPACE/tc/llvm-arm-toolchain-ship-10.0.9/bin:$PATH
-      export PATH=$GITHUB_WORKSPACE/tc/aarch64-linux-android-4.9/bin:$PATH
+      cd kernel
+      sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 302/' Makefile || true
+
+  - name: Build environment
+    run: |
+      echo "KBUILD_BUILD_USER=voxelsy" >> $GITHUB_ENV
+      echo "KBUILD_BUILD_HOST=ubuntu" >> $GITHUB_ENV
+      echo "LOCALVERSION=-qgki" >> $GITHUB_ENV
+
+  - name: Build
+    run: |
+      export PATH=$GITHUB_WORKSPACE/toolchains/llvm-arm-toolchain-ship-10.0.9/bin:$PATH
+      export PATH=$GITHUB_WORKSPACE/toolchains/aarch64-linux-android-4.9/bin:$PATH
 
       cd kernel
-
       mkdir -p out
 
-      DEFCONFIG=$(find arch/arm64/configs -iname '*raphael*defconfig' | head -n1 | xargs basename)
-
-      make O=out ARCH=arm64 $DEFCONFIG
+      # ЗАМЕНИ ПОСЛЕ ПРОСМОТРА ЛОГОВ НА НУЖНЫЙ DEFCONFIG
+      make O=out ARCH=arm64 raphael_defconfig
 
       make -j$(nproc) \
-      O=out \
-      ARCH=arm64 \
-      CC=clang \
-      LLVM=1 \
-      LLVM_IAS=1 \
-      CROSS_COMPILE=aarch64-linux-android- \
-      CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        O=out \
+        ARCH=arm64 \
+        CC=clang \
+        LLVM=1 \
+        LLVM_IAS=1 \
+        CROSS_COMPILE=aarch64-linux-android- \
+        CROSS_COMPILE_ARM32=arm-linux-androideabi-
 
-  - name: Upload
+  - name: Upload artifacts
     uses: actions/upload-artifact@v4
     with:
-      name: raphael-kernel
+      name: kernel-output
       path: |
         kernel/out/arch/arm64/boot/Image*
         kernel/out/arch/arm64/boot/*.dtb
