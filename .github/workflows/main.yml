@@ -30,7 +30,6 @@ jobs:
             libssl-dev libelf-dev kmod cpio \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             clang-15 lld-15
-          # Создаём ссылки, чтобы make находил clang и llvm-утилиты
           sudo ln -sf /usr/bin/clang-15   /usr/bin/clang
           sudo ln -sf /usr/bin/ld.lld-15  /usr/bin/ld.lld
           sudo ln -sf /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
@@ -40,17 +39,21 @@ jobs:
           sudo ln -sf /usr/bin/llvm-readelf-15 /usr/bin/llvm-readelf
           sudo ln -sf /usr/bin/llvm-strip-15 /usr/bin/llvm-strip
 
-      - name: Fix missing min-tool-version.sh
+      - name: Create dummy min-tool-version.sh
         run: |
           cd kernel
-          # Создаём заглушку, чтобы обойти проверку версии ассемблера
           mkdir -p scripts
           cat > scripts/min-tool-version.sh << 'EOF'
           #!/bin/sh
-          # This is a dummy script to bypass the assembler version check
           echo 0
           EOF
           chmod +x scripts/min-tool-version.sh
+
+      - name: Patch out missing KernelSU Kconfig
+        run: |
+          cd kernel
+          # Удаляем строку source "drivers/kernelsu/Kconfig" из drivers/Kconfig
+          sed -i '/source "drivers\/kernelsu\/Kconfig"/d' drivers/Kconfig
 
       - name: Configure kernel
         run: |
