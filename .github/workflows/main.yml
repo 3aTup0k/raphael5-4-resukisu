@@ -48,6 +48,29 @@ jobs:
           echo "KBUILD_BUILD_HOST=ubuntu" >> $GITHUB_ENV
           echo "LOCALVERSION=-qgki" >> $GITHUB_ENV
 
+      - name: Fix missing script
+        run: |
+          cat > kernel/scripts/min-tool-version.sh << 'EOF'
+          #!/bin/sh
+
+          case "$1" in
+          binutils)
+              echo 2.25.0
+              ;;
+          gcc)
+              echo 5.1.0
+              ;;
+          llvm)
+              echo 10.0.1
+              ;;
+          *)
+              echo 0
+              ;;
+          esac
+          EOF
+
+          chmod +x kernel/scripts/min-tool-version.sh
+
       - name: Build kernel
         run: |
           export CLANG=$(find $GITHUB_WORKSPACE/toolchains -type f -name clang | head -n1)
