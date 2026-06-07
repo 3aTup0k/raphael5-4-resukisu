@@ -1,79 +1,107 @@
-name: CI Build Kernel for raphael
+name: Build GKI 5.4 Kernel for raphael
 
 on:
   workflow_dispatch:
-    inputs:
-      BUILD_CONFIG:
-        description: 'Build config file path'
-        required: true
-        default: 'build.config.raphael'
-      LTO:
-        description: 'LTO mode'
-        required: true
-        default: 'full'
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-    - name: Maximize build space
-      uses: easimon/maximize-build-space@master
-      with:
-        root-reserve-mb: 8192
-        temp-reserve-mb: 2048
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
+      - name: Free disk space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
 
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        path: kernel
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: kernel
 
-    - name: Set up build dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y git ccache flex bison libssl-dev libelf-dev bc kmod
+      - name: Install toolchain (Clang 15, LLD, binutils)
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc bison flex build-essential ccache \
+            libssl-dev libelf-dev kmod cpio \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          # Установка clang-15 и lld-15 из официального репозитория Ubuntu 22.04
+          sudo apt install -y clang-15 lld-15
+          # Создаём символические ссылки для удобства
+          sudo ln -sf /usr/bin/clang-15   /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-15  /usr/bin/ld.lld
+          sudo ln -sf /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
+          sudo ln -sf /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
+          sudo ln -sf /usr/bin/llvm-objcopy-15 /usr/bin/llvm-objcopy
+          sudo ln -sf /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
+          sudo ln -sf /usr/bin/llvm-readelf-15 /usr/bin/llvm-readelf
+          sudo ln -sf /usr/bin/llvm-strip-15 /usr/bin/llvm-strip
 
-    - name: Build kernel
-      run: |
-        cd kernel
-        # Set up toolchain path
-        export PATH=$(pwd)/../clang/bin:$PATH
-        export LD_LIBRARY_PATH=$(pwd)/../clang/lib:$LD_LIBRARY_PATH
-        
-        # Create out directory
-        mkdir -p out
-        
-        # Use default GKI config if specific one not found
-        if [ -f arch/arm64/configs/${BUILD_CONFIG%.*}_defconfig ]; then
-          DEFCONFIG=${BUILD_CONFIG%.*}_defconfig
-        else
-          DEFCONFIG=gki_defconfig
-        fi
-        
-        # Build the kernel
-        make O=out ARCH=arm64 $DEFCONFIG
-        make O=out ARCH=arm64 -j$(nproc) \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          STRIP=llvm-strip \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          READELF=llvm-readelf \
-          CROSS_COMPILE=aarch64-linux-gnu-
-        
-        # Copy compiled images
-        mkdir -p ../artifact
-        cp out/arch/arm64/boot/Image ../artifact/
-        cp out/arch/arm64/boot/Image.gz ../artifact/ 2>/dev/null || true
-        cp out/vmlinux ../artifact/ 2>/dev/null || true
+      - name: Add missing min-tool-version.sh (fix for kernel 5.4)
+        run: |
+          cd kernel
+          # Скрипт нужен для проверки версии ассемблера, его нет в репозитории
+          wget -O scripts/min-tool-version.sh https://raw.githubusercontent.com/torvalds/linux/v5.4/scripts/min-tool-version.sh
+          chmod +x scripts/min-tool-version.sh
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-images
-        path: artifact/
+      - name: Prepare out directory and defconfig
+        run: |
+          cd kernel
+          mkdir -p out
+          # Используем raphael_defconfig, если он есть, иначе gki_defconfig
+          if [ -f arch/arm64/configs/raphael_defconfig ]; then
+            DEFCONFIG=raphael_defconfig
+          else
+            DEFCONFIG=gki_defconfig
+          fi
+          echo "Using defconfig: $DEFCONFIG"
+          make O=out ARCH=arm64 $DEFCONFIG
+
+      - name: Build kernel image (Image)
+        run: |
+          cd kernel
+          make O=out ARCH=arm64 -j$(nproc) \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            STRIP=llvm-strip \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            READELF=llvm-readelf \
+            CROSS_COMPILE=aarch64-linux-gnu-
+
+      - name: Build kernel modules (optional)
+        run: |
+          cd kernel
+          make O=out ARCH=arm64 modules -j$(nproc) \
+            CC=clang \
+            LD=ld.lld \
+            CROSS_COMPILE=aarch64-linux-gnu-
+          # Установка модулей в папку для архивации
+          mkdir -p ../artifact/modules
+          make O=out ARCH=arm64 INSTALL_MOD_PATH=../artifact/modules modules_install
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p final_artifacts
+          cp kernel/out/arch/arm64/boot/Image final_artifacts/ 2>/dev/null || echo "Image not found"
+          cp kernel/out/arch/arm64/boot/Image.gz final_artifacts/ 2>/dev/null || true
+          cp kernel/out/vmlinux final_artifacts/ 2>/dev/null || true
+          # Если модули собрались, упаковываем их
+          if [ -d artifact/modules/lib/modules ]; then
+            cd artifact/modules
+            tar -czf ../../final_artifacts/modules.tar.gz lib/modules
+            cd ../..
+          fi
+          echo "Build completed at $(date)" > final_artifacts/build_info.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: raphael-gki-5.4
+          path: final_artifacts/
