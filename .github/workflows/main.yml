@@ -1,4 +1,4 @@
-name: Build Raphael Kernel
+name: Build Raphael 5.4
 
 on:
   workflow_dispatch:
@@ -11,7 +11,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y git wget curl bc bison flex cpio build-essential zip unzip rsync libssl-dev libelf-dev
+          sudo apt install -y \
+            git wget curl bc bison flex cpio \
+            build-essential zip unzip rsync \
+            libssl-dev libelf-dev
 
       - name: Clone kernel
         run: |
@@ -28,10 +31,16 @@ jobs:
           tar -xf llvm-arm-toolchain-ship-10.0.9.tar.gz
           tar -xf aarch64-linux-android-4.9-Linux-5.4.tar.gz
 
-      - name: Show configs
+      - name: Find toolchains
         run: |
-          cd kernel
-          find arch/arm64/configs -type f | sort
+          echo "=== CLANG ==="
+          find $GITHUB_WORKSPACE/toolchains -type f -name clang
+
+          echo "=== LLD ==="
+          find $GITHUB_WORKSPACE/toolchains -type f -name ld.lld
+
+          echo "=== GCC ==="
+          find $GITHUB_WORKSPACE/toolchains -type f -name aarch64-linux-android-gcc
 
       - name: Set build info
         run: |
@@ -41,10 +50,24 @@ jobs:
 
       - name: Build kernel
         run: |
-          export PATH=$GITHUB_WORKSPACE/toolchains/llvm-arm-toolchain-ship-10.0.9/bin:$PATH
-          export PATH=$GITHUB_WORKSPACE/toolchains/aarch64-linux-android-4.9/bin:$PATH
+          export CLANG=$(find $GITHUB_WORKSPACE/toolchains -type f -name clang | head -n1)
+
+          if [ -z "$CLANG" ]; then
+            echo "clang not found"
+            exit 1
+          fi
+
+          export CLANG_DIR=$(dirname "$CLANG")
+          export PATH=$CLANG_DIR:$PATH
+
+          echo "Using clang:"
+          which clang
+          clang --version
 
           cd kernel
+
+          sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 302/' Makefile || true
+
           mkdir -p out
 
           make O=out ARCH=arm64 raphael_defconfig
@@ -55,13 +78,15 @@ jobs:
             CC=clang \
             LLVM=1 \
             LLVM_IAS=1 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi-
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-output
+          name: raphael-kernel
+          if-no-files-found: warn
           path: |
             kernel/out/arch/arm64/boot/Image*
             kernel/out/arch/arm64/boot/*.dtb
