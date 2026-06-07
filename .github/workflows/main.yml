@@ -1,4 +1,4 @@
-name: Build GKI 5.4 Kernel for raphael
+name: Build GKI 5.4 Kernel for raphael (build.sh)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Free disk space
+      - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
@@ -22,83 +22,31 @@ jobs:
           fetch-depth: 0
           path: kernel
 
-      - name: Install toolchain (Clang 15, LLD, binutils)
+      - name: Checkout build tools
+        uses: actions/checkout@v4
+        with:
+          repository: android/kernel-build-tools
+          path: build-tools
+
+      - name: Set up build environment
         run: |
           sudo apt update
-          sudo apt install -y \
-            bc bison flex build-essential ccache \
-            libssl-dev libelf-dev kmod cpio \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-          # Установка clang-15 и lld-15 из официального репозитория Ubuntu 22.04
-          sudo apt install -y clang-15 lld-15
-          # Создаём символические ссылки для удобства
-          sudo ln -sf /usr/bin/clang-15   /usr/bin/clang
-          sudo ln -sf /usr/bin/ld.lld-15  /usr/bin/ld.lld
-          sudo ln -sf /usr/bin/llvm-ar-15 /usr/bin/llvm-ar
-          sudo ln -sf /usr/bin/llvm-nm-15 /usr/bin/llvm-nm
-          sudo ln -sf /usr/bin/llvm-objcopy-15 /usr/bin/llvm-objcopy
-          sudo ln -sf /usr/bin/llvm-objdump-15 /usr/bin/llvm-objdump
-          sudo ln -sf /usr/bin/llvm-readelf-15 /usr/bin/llvm-readelf
-          sudo ln -sf /usr/bin/llvm-strip-15 /usr/bin/llvm-strip
+          sudo apt install -y bc bison flex build-essential libssl-dev libelf-dev kmod cpio
 
-      - name: Add missing min-tool-version.sh (fix for kernel 5.4)
+      - name: Build kernel with build.sh
         run: |
           cd kernel
-          # Скрипт нужен для проверки версии ассемблера, его нет в репозитории
-          wget -O scripts/min-tool-version.sh https://raw.githubusercontent.com/torvalds/linux/v5.4/scripts/min-tool-version.sh
-          chmod +x scripts/min-tool-version.sh
-
-      - name: Prepare out directory and defconfig
-        run: |
-          cd kernel
-          mkdir -p out
-          # Используем raphael_defconfig, если он есть, иначе gki_defconfig
-          if [ -f arch/arm64/configs/raphael_defconfig ]; then
-            DEFCONFIG=raphael_defconfig
-          else
-            DEFCONFIG=gki_defconfig
+          # Используем официальный скрипт сборки
+          BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          # Копируем результаты в папку для артефактов
+          mkdir -p ../final_artifacts
+          cp out/android-5.4/dist/Image ../final_artifacts/ 2>/dev/null || true
+          cp out/android-5.4/dist/Image.gz ../final_artifacts/ 2>/dev/null || true
+          cp out/android-5.4/dist/vmlinux ../final_artifacts/ 2>/dev/null || true
+          # Копируем модули, если они есть
+          if [ -d out/android-5.4/dist/modules ]; then
+            cp -r out/android-5.4/dist/modules ../final_artifacts/
           fi
-          echo "Using defconfig: $DEFCONFIG"
-          make O=out ARCH=arm64 $DEFCONFIG
-
-      - name: Build kernel image (Image)
-        run: |
-          cd kernel
-          make O=out ARCH=arm64 -j$(nproc) \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            STRIP=llvm-strip \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            READELF=llvm-readelf \
-            CROSS_COMPILE=aarch64-linux-gnu-
-
-      - name: Build kernel modules (optional)
-        run: |
-          cd kernel
-          make O=out ARCH=arm64 modules -j$(nproc) \
-            CC=clang \
-            LD=ld.lld \
-            CROSS_COMPILE=aarch64-linux-gnu-
-          # Установка модулей в папку для архивации
-          mkdir -p ../artifact/modules
-          make O=out ARCH=arm64 INSTALL_MOD_PATH=../artifact/modules modules_install
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p final_artifacts
-          cp kernel/out/arch/arm64/boot/Image final_artifacts/ 2>/dev/null || echo "Image not found"
-          cp kernel/out/arch/arm64/boot/Image.gz final_artifacts/ 2>/dev/null || true
-          cp kernel/out/vmlinux final_artifacts/ 2>/dev/null || true
-          # Если модули собрались, упаковываем их
-          if [ -d artifact/modules/lib/modules ]; then
-            cd artifact/modules
-            tar -czf ../../final_artifacts/modules.tar.gz lib/modules
-            cd ../..
-          fi
-          echo "Build completed at $(date)" > final_artifacts/build_info.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
