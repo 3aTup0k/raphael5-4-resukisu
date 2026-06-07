@@ -1,4 +1,4 @@
-name: Build GKI 5.4 Kernel for raphael (build.sh)
+name: Build GKI 5.4 Kernel for Raphael
 
 on:
   workflow_dispatch:
@@ -22,34 +22,61 @@ jobs:
           fetch-depth: 0
           path: kernel
 
-      - name: Checkout build tools
-        uses: actions/checkout@v4
-        with:
-          repository: android/kernel-build-tools
-          path: build-tools
-
-      - name: Set up build environment
+      - name: Set up build dependencies
         run: |
           sudo apt update
-          sudo apt install -y bc bison flex build-essential libssl-dev libelf-dev kmod cpio
+          sudo apt install -y \
+            bc bison build-essential ccache flex \
+            libssl-dev libelf-dev kmod cpio \
+            binutils-aarch64-linux-gnu
 
-      - name: Build kernel with build.sh
+      - name: Install LLVM toolchain (Clang, LLD, etc.)
+        run: |
+          wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.7/clang+llvm-15.0.7-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          tar -xf clang+llvm-15.0.7-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          echo "$(pwd)/clang+llvm-15.0.7-x86_64-linux-gnu-ubuntu-22.04/bin" >> $GITHUB_PATH
+
+      - name: Configure kernel
         run: |
           cd kernel
-          # Используем официальный скрипт сборки
-          BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
-          # Копируем результаты в папку для артефактов
-          mkdir -p ../final_artifacts
-          cp out/android-5.4/dist/Image ../final_artifacts/ 2>/dev/null || true
-          cp out/android-5.4/dist/Image.gz ../final_artifacts/ 2>/dev/null || true
-          cp out/android-5.4/dist/vmlinux ../final_artifacts/ 2>/dev/null || true
-          # Копируем модули, если они есть
-          if [ -d out/android-5.4/dist/modules ]; then
-            cp -r out/android-5.4/dist/modules ../final_artifacts/
+          mkdir -p out
+          if [ -f arch/arm64/configs/raphael_defconfig ]; then
+            DEFCONFIG=raphael_defconfig
+          else
+            DEFCONFIG=gki_defconfig
           fi
+          make O=out ARCH=arm64 $DEFCONFIG
+
+      - name: Build kernel
+        run: |
+          cd kernel
+          make O=out ARCH=arm64 -j$(nproc) \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            STRIP=llvm-strip \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            READELF=llvm-readelf \
+            CROSS_COMPILE=aarch64-linux-gnu-
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p final_artifacts
+          if [ -f kernel/out/arch/arm64/boot/Image.gz ]; then
+            cp kernel/out/arch/arm64/boot/Image.gz final_artifacts/
+          elif [ -f kernel/out/arch/arm64/boot/Image ]; then
+            cp kernel/out/arch/arm64/boot/Image final_artifacts/
+          fi
+          if [ -f kernel/out/arch/arm64/boot/dtbo.img ]; then
+            cp kernel/out/arch/arm64/boot/dtbo.img final_artifacts/
+          fi
+          cp kernel/out/vmlinux final_artifacts/ 2>/dev/null || true
+          echo "Сборка завершена" > final_artifacts/build_info.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: raphael-gki-5.4
+          name: raphael-kernel-5.4-gki
           path: final_artifacts/
