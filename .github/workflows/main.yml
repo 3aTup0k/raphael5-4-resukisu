@@ -1,113 +1,79 @@
-name: Build Raphael 5.4
+name: CI Build Kernel for raphael
 
 on:
   workflow_dispatch:
+    inputs:
+      BUILD_CONFIG:
+        description: 'Build config file path'
+        required: true
+        default: 'build.config.raphael'
+      LTO:
+        description: 'LTO mode'
+        required: true
+        default: 'full'
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
-      - name: Install dependencies
-        run: |
-          sudo apt update
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: 8192
+        temp-reserve-mb: 2048
+        remove-dotnet: 'true'
+        remove-android: 'true'
+        remove-haskell: 'true'
 
-          sudo apt install -y \
-            git wget curl rsync zip unzip \
-            bc bison flex cpio \
-            build-essential \
-            libssl-dev \
-            libelf-dev \
-            libncurses-dev \
-            zlib1g-dev \
-            gcc g++ make \
-            python3 python-is-python3 \
-            ca-certificates
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        path: kernel
 
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 \
-                      /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+    - name: Set up build dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y git ccache flex bison libssl-dev libelf-dev bc kmod
 
-      - name: Clone kernel
-        run: |
-          git clone --depth=1 https://github.com/Nyako-mini/raphael5-4-resukisu.git kernel
+    - name: Build kernel
+      run: |
+        cd kernel
+        # Set up toolchain path
+        export PATH=$(pwd)/../clang/bin:$PATH
+        export LD_LIBRARY_PATH=$(pwd)/../clang/lib:$LD_LIBRARY_PATH
+        
+        # Create out directory
+        mkdir -p out
+        
+        # Use default GKI config if specific one not found
+        if [ -f arch/arm64/configs/${BUILD_CONFIG%.*}_defconfig ]; then
+          DEFCONFIG=${BUILD_CONFIG%.*}_defconfig
+        else
+          DEFCONFIG=gki_defconfig
+        fi
+        
+        # Build the kernel
+        make O=out ARCH=arm64 $DEFCONFIG
+        make O=out ARCH=arm64 -j$(nproc) \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          STRIP=llvm-strip \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          READELF=llvm-readelf \
+          CROSS_COMPILE=aarch64-linux-gnu-
+        
+        # Copy compiled images
+        mkdir -p ../artifact
+        cp out/arch/arm64/boot/Image ../artifact/
+        cp out/arch/arm64/boot/Image.gz ../artifact/ 2>/dev/null || true
+        cp out/vmlinux ../artifact/ 2>/dev/null || true
 
-      - name: Download toolchains
-        run: |
-          mkdir toolchains
-          cd toolchains
-
-          wget -q https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/llvm-arm-toolchain-ship-10.0.9.tar.gz
-          wget -q https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/aarch64-linux-android-4.9-Linux-5.4.tar.gz
-
-          tar -xf llvm-arm-toolchain-ship-10.0.9.tar.gz
-          tar -xf aarch64-linux-android-4.9-Linux-5.4.tar.gz
-
-      - name: Set build info
-        run: |
-          echo "KBUILD_BUILD_USER=voxelsy" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=ubuntu" >> $GITHUB_ENV
-          echo "LOCALVERSION=-qgki" >> $GITHUB_ENV
-
-      - name: Fix missing script
-        run: |
-          cat > kernel/scripts/min-tool-version.sh << 'EOF'
-          #!/bin/sh
-
-          case "$1" in
-          binutils)
-              echo 2.25.0
-              ;;
-          gcc)
-              echo 5.1.0
-              ;;
-          llvm)
-              echo 10.0.1
-              ;;
-          *)
-              echo 0
-              ;;
-          esac
-          EOF
-
-          chmod +x kernel/scripts/min-tool-version.sh
-
-      - name: Build kernel
-        run: |
-          export CLANG=$(find $GITHUB_WORKSPACE/toolchains -type f -name clang | head -n1)
-
-          if [ -z "$CLANG" ]; then
-            echo "clang not found"
-            exit 1
-          fi
-
-          export PATH=$(dirname "$CLANG"):$PATH
-
-          clang --version
-
-          cd kernel
-
-          sed -i 's/^SUBLEVEL = .*/SUBLEVEL = 302/' Makefile || true
-
-          mkdir -p out
-
-          make O=out ARCH=arm64 raphael_defconfig
-
-          make -j$(nproc) \
-            O=out \
-            ARCH=arm64 \
-            CC=clang \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_ARM32=arm-linux-androideabi-
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: raphael-kernel
-          if-no-files-found: warn
-          path: |
-            kernel/out/arch/arm64/boot/Image*
-            kernel/out/arch/arm64/boot/*.dtb
-            kernel/out/arch/arm64/boot/*.img
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-images
+        path: artifact/
